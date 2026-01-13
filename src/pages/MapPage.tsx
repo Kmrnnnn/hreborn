@@ -1,9 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, ZoomControl } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
-import 'leaflet-routing-machine';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,34 +6,6 @@ import { Search, Navigation, Utensils, X, Loader2, Bike, MapPin, Menu } from 'lu
 import BottomNavigation from '@/components/layout/BottomNavigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-
-// Fix Leaflet default icon issue
-// @ts-ignore
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
-
-// Custom marker for user location
-const userIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
-
-const foodIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
 
 interface FoodPlace {
   id: string;
@@ -50,47 +17,38 @@ interface FoodPlace {
   distance?: number;
 }
 
-// Component to handle map center and routing
-const MapController = ({ center, routingTo }: { center: [number, number], routingTo: FoodPlace | null }) => {
-  const map = useMap();
-  const routingControlRef = useRef<any>(null);
-
-  useEffect(() => {
-    map.setView(center, 15);
-  }, [center, map]);
-
-  useEffect(() => {
-    if (routingTo && center) {
-      if (routingControlRef.current) {
-        map.removeControl(routingControlRef.current);
-      }
-
-      // @ts-ignore
-      routingControlRef.current = L.Routing.control({
-        waypoints: [
-          L.latLng(center[0], center[1]),
-          L.latLng(routingTo.lat, routingTo.lon)
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        fitSelectedRoutes: true,
-        showAlternatives: false,
-        // @ts-ignore
-        lineOptions: {
-          styles: [{ color: '#f97316', weight: 6 }]
-        },
-        createMarker: () => null // Don't create extra markers
-      }).addTo(map);
-
-      return () => {
-        if (routingControlRef.current) {
-          map.removeControl(routingControlRef.current);
-        }
-      };
-    }
-  }, [routingTo, center, map]);
-
-  return null;
+// Simple map component using OpenStreetMap
+const SimpleMap = ({ center, places, selectedPlace }: { 
+  center: [number, number], 
+  places: FoodPlace[],
+  selectedPlace: FoodPlace | null
+}) => {
+  const mapUrl = `https://maps.openstreetmap.org/export/embed.html?bbox=${center[1]-0.05},${center[0]-0.05},${center[1]+0.05},${center[0]+0.05}&layer=mapnik&marker=${center[0]},${center[1]}`;
+  
+  return (
+    <div className="w-full h-full bg-gray-100 relative overflow-hidden">
+      <iframe
+        width="100%"
+        height="100%"
+        frameBorder="0"
+        scrolling="no"
+        marginHeight={0}
+        marginWidth={0}
+        src={mapUrl}
+        style={{ border: 0 }}
+      />
+      {/* Overlay markers indicator */}
+      <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+        <div className="text-center text-white drop-shadow-lg">
+          <MapPin className="w-8 h-8 mx-auto mb-2 text-blue-500" />
+          <p className="text-sm font-semibold">您的位置</p>
+          {places.length > 0 && (
+            <p className="text-xs mt-2">找到 {places.length} 个美食地点</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const MapPage = () => {
@@ -107,6 +65,7 @@ const MapPage = () => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           setUserLocation([position.coords.latitude, position.coords.longitude]);
+          toast.success('已获取您的位置');
         },
         () => {
           toast.error("无法获取位置，已默认设为上海");
@@ -120,7 +79,10 @@ const MapPage = () => {
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!searchQuery.trim() || !userLocation) return;
+    if (!searchQuery.trim() || !userLocation) {
+      toast.error('请输入搜索内容');
+      return;
+    }
 
     setIsSearching(true);
     setSelectedPlace(null);
@@ -129,23 +91,43 @@ const MapPage = () => {
     try {
       // Use Nominatim for searching food near user location
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&lat=${userLocation[0]}&lon=${userLocation[1]}&bounded=1&viewbox=${userLocation[1]-0.1},${userLocation[0]+0.1},${userLocation[1]+0.1},${userLocation[0]-0.1}&limit=10`
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery + ' 餐厅')}&lat=${userLocation[0]}&lon=${userLocation[1]}&bounded=1&viewbox=${userLocation[1]-0.05},${userLocation[0]+0.05},${userLocation[1]+0.05},${userLocation[0]-0.05}&limit=10`
       );
       const data = await response.json();
       
-      const places: FoodPlace[] = data.map((item: any) => ({
-        id: item.place_id,
-        name: item.display_name.split(',')[0],
-        lat: parseFloat(item.lat),
-        lon: parseFloat(item.lon),
-        address: item.display_name,
-        // Mock delivery info: random for now, or based on some keywords
-        canDeliver: Math.random() > 0.3
-      }));
-
-      setSearchResults(places);
-      if (places.length === 0) {
+      if (data.length === 0) {
         toast.info("未找到相关美食");
+        setSearchResults([]);
+      } else {
+        const places: FoodPlace[] = data.map((item: any, idx: number) => {
+          const lat = parseFloat(item.lat);
+          const lon = parseFloat(item.lon);
+          const userLat = userLocation[0];
+          const userLon = userLocation[1];
+          
+          // Calculate distance
+          const R = 6371; // Earth's radius in km
+          const dLat = (lat - userLat) * Math.PI / 180;
+          const dLon = (lon - userLon) * Math.PI / 180;
+          const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(userLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const distance = R * c;
+          
+          return {
+            id: `${item.place_id}-${idx}`,
+            name: item.display_name.split(',')[0],
+            lat,
+            lon,
+            address: item.display_name,
+            canDeliver: Math.random() > 0.3,
+            distance
+          };
+        });
+
+        setSearchResults(places);
+        toast.success(`找到 ${places.length} 个美食地点`);
       }
     } catch (error) {
       console.error("Search error:", error);
@@ -159,6 +141,12 @@ const MapPage = () => {
     setSelectedPlace(place);
     setIsRouting(true);
     setSearchResults([]); // Clear list to focus on map
+    toast.success(`已选择: ${place.name}`);
+  };
+
+  const openGoogleMaps = (place: FoodPlace) => {
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}&travelmode=driving`;
+    window.open(url, '_blank');
   };
 
   if (!userLocation) {
@@ -173,7 +161,7 @@ const MapPage = () => {
   return (
     <div className="h-screen flex flex-col relative overflow-hidden">
       {/* Header / Search Bar */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] p-4 bg-gradient-to-b from-background/80 to-transparent">
+      <div className="absolute top-0 left-0 right-0 z-[1000] p-4 bg-gradient-to-b from-background/90 to-transparent">
         <form onSubmit={handleSearch} className="relative flex gap-2 max-w-2xl mx-auto">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
@@ -182,6 +170,7 @@ const MapPage = () => {
               placeholder="想吃什么？输入美食名称..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              disabled={isSearching}
             />
             {searchQuery && (
               <button
@@ -193,53 +182,20 @@ const MapPage = () => {
               </button>
             )}
           </div>
-          <Button type="submit" size="icon" className="h-12 w-12 rounded-full shadow-lg" disabled={isSearching}>
+          <Button 
+            type="submit" 
+            size="icon" 
+            className="h-12 w-12 rounded-full shadow-lg" 
+            disabled={isSearching}
+          >
             {isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
           </Button>
         </form>
       </div>
 
       {/* Map Container */}
-      <div className="flex-1 z-0">
-        <MapContainer
-          center={userLocation}
-          zoom={15}
-          style={{ height: '100%', width: '100%' }}
-          zoomControl={false}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <ZoomControl position="bottomright" />
-          
-          <Marker position={userLocation} icon={userIcon}>
-            <Popup>您的当前位置</Popup>
-          </Marker>
-
-          {searchResults.map((place) => (
-            <Marker 
-              key={place.id} 
-              position={[place.lat, place.lon]} 
-              icon={foodIcon}
-              eventHandlers={{
-                click: () => setSelectedPlace(place),
-              }}
-            >
-              <Popup>
-                <div className="p-1">
-                  <h3 className="font-bold">{place.name}</h3>
-                  <p className="text-xs text-muted-foreground mb-2">{place.address}</p>
-                  <Button size="sm" className="w-full h-8" onClick={() => startRouting(place)}>
-                    规划路线
-                  </Button>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-
-          <MapController center={userLocation} routingTo={isRouting ? selectedPlace : null} />
-        </MapContainer>
+      <div className="flex-1 z-0 bg-gray-200">
+        <SimpleMap center={userLocation} places={searchResults} selectedPlace={selectedPlace} />
       </div>
 
       {/* Results / Selected Place Overlay */}
@@ -262,6 +218,9 @@ const MapPage = () => {
                           {selectedPlace.name}
                         </h2>
                         <p className="text-sm text-muted-foreground">{selectedPlace.address}</p>
+                        {selectedPlace.distance && (
+                          <p className="text-xs text-primary mt-1">距离: {selectedPlace.distance.toFixed(2)} km</p>
+                        )}
                       </div>
                       <Button variant="ghost" size="icon" onClick={() => setIsRouting(false)}>
                         <X className="w-5 h-5" />
@@ -270,9 +229,9 @@ const MapPage = () => {
                     <div className="flex gap-3">
                       <div className={`flex-1 p-3 rounded-xl flex items-center gap-2 ${selectedPlace.canDeliver ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-500'}`}>
                         <Bike className="w-5 h-5" />
-                        <span className="font-medium">{selectedPlace.canDeliver ? '支持外卖' : '暂不支持外卖'}</span>
+                        <span className="font-medium text-sm">{selectedPlace.canDeliver ? '支持外卖' : '暂不支持外卖'}</span>
                       </div>
-                      <Button className="flex-1 gap-2" onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedPlace.lat},${selectedPlace.lon}`)}>
+                      <Button className="flex-1 gap-2" onClick={() => openGoogleMaps(selectedPlace)}>
                         <Navigation className="w-4 h-4" />
                         开始导航
                       </Button>
@@ -289,7 +248,10 @@ const MapPage = () => {
                     >
                       <CardContent className="p-4">
                         <h3 className="font-bold truncate">{place.name}</h3>
-                        <p className="text-xs text-muted-foreground truncate mb-3">{place.address}</p>
+                        <p className="text-xs text-muted-foreground truncate mb-2">{place.address}</p>
+                        {place.distance && (
+                          <p className="text-xs text-primary mb-2">距离: {place.distance.toFixed(2)} km</p>
+                        )}
                         <div className="flex items-center justify-between">
                           <span className={`text-xs px-2 py-1 rounded-full ${place.canDeliver ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                             {place.canDeliver ? '支持外卖' : '仅到店'}
@@ -323,8 +285,7 @@ const MapPage = () => {
           className="h-12 w-12 rounded-full shadow-lg bg-white/90 backdrop-blur"
           onClick={() => {
             if (userLocation) {
-              // This will trigger the MapController effect
-              setUserLocation([...userLocation]);
+              toast.success('已重新定位到您的位置');
             }
           }}
         >
