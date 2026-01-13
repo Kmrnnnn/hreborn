@@ -1,27 +1,27 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'app.lovable.4870051ef09a413e8f34a5a2214e94da',
-  appName: '健康地图',
+  appId: 'com.hreborn.app',
+  appName: 'hreborn',
   webDir: 'dist',
   server: {
-    url: 'https://4870051e-f09a-413e-8f34-a5a2214e94da.lovableproject.com?forceHideBadge=true',
+    // Remove the hardcoded URL for production build
     cleartext: true
   },
   ios: {
-    contentInset: 'automatic',
+    contentInset: 'always',
     preferredContentMode: 'mobile',
-    scheme: 'HealthMap'
+    scheme: 'hreborn'
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 2000,
-      backgroundColor: '#14b8a6',
+      backgroundColor: '#10b981',
       showSpinner: false
     },
     StatusBar: {
-      style: 'light',
-      backgroundColor: '#14b8a6'
+      style: 'dark',
+      backgroundColor: '#ffffff'
     }
   }
 };

@@ -9,6 +9,8 @@ import { Search, Navigation, Utensils, X, Loader2, Bike, MapPin, Menu, Star, Clo
 import BottomNavigation from '@/components/layout/BottomNavigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { Geolocation } from '@capacitor/geolocation';
+import { Device } from '@capacitor/device';
 
 // Fix Leaflet default icon issue
 // @ts-ignore
@@ -118,23 +120,25 @@ const MapPage = () => {
     }
   }, [isAutoLoading]);
 
-  // Get user location and auto-search on mount
+  // Get user location and auto-search on mount using Capacitor Geolocation
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const loc: [number, number] = [position.coords.latitude, position.coords.longitude];
-          setUserLocation(loc);
-          searchHealthyFood(loc);
-        },
-        () => {
-          const defaultLoc: [number, number] = [31.2304, 121.4737];
-          setUserLocation(defaultLoc);
-          searchHealthyFood(defaultLoc);
-          toast.info("无法获取实时位置，已显示默认区域健康餐厅");
-        }
-      );
-    }
+    const getLocation = async () => {
+      try {
+        const coordinates = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true
+        });
+        const loc: [number, number] = [coordinates.coords.latitude, coordinates.coords.longitude];
+        setUserLocation(loc);
+        searchHealthyFood(loc);
+      } catch (error) {
+        console.error("Geolocation error:", error);
+        const defaultLoc: [number, number] = [31.2304, 121.4737];
+        setUserLocation(defaultLoc);
+        searchHealthyFood(defaultLoc);
+        toast.info("无法获取实时位置，已显示默认区域健康餐厅");
+      }
+    };
+    getLocation();
   }, [searchHealthyFood]);
 
   const handleManualSearch = (e: React.FormEvent) => {
@@ -144,8 +148,15 @@ const MapPage = () => {
     }
   };
 
-  const openNavigation = (place: FoodPlace) => {
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}`, '_blank');
+  const openNavigation = async (place: FoodPlace) => {
+    const info = await Device.getInfo();
+    if (info.platform === 'ios') {
+      // Use Apple Maps on iOS
+      window.open(`maps://?daddr=${place.lat},${place.lon}&dirflg=d`, '_blank');
+    } else {
+      // Use Google Maps on other platforms
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}`, '_blank');
+    }
   };
 
   if (!userLocation) {
