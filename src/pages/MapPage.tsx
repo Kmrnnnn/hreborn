@@ -1,408 +1,336 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import { MapContainer, TileLayer, Marker, Popup, useMap, ZoomControl } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
+import 'leaflet-routing-machine';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { useHealthResources, HealthResource } from '@/hooks/useHealthResources';
+import { Search, Navigation, Utensils, X, Loader2, Bike, MapPin, Menu } from 'lucide-react';
 import BottomNavigation from '@/components/layout/BottomNavigation';
-import {
-  MapPin,
-  Star,
-  Navigation,
-  Utensils,
-  Dumbbell,
-  Trees,
-  Heart,
-  Building,
-  Search,
-  X,
-  Loader2,
-  ChevronUp,
-  Phone,
-  Clock
-} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 
-const categoryIcons: Record<string, typeof Utensils> = {
-  restaurant: Utensils,
-  gym: Dumbbell,
-  park: Trees,
-  wellness: Heart,
-  clinic: Building
-};
+// Fix Leaflet default icon issue
+// @ts-ignore
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
 
-const categoryLabels: Record<string, string> = {
-  restaurant: '餐厅',
-  gym: '健身房',
-  park: '公园',
-  wellness: '理疗',
-  clinic: '诊所'
-};
+// Custom marker for user location
+const userIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
 
-const categoryColors: Record<string, string> = {
-  restaurant: '#14b8a6',
-  gym: '#f97316',
-  park: '#22c55e',
-  wellness: '#8b5cf6',
-  clinic: '#3b82f6'
+const foodIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
+
+interface FoodPlace {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  address: string;
+  canDeliver: boolean;
+  distance?: number;
+}
+
+// Component to handle map center and routing
+const MapController = ({ center, routingTo }: { center: [number, number], routingTo: FoodPlace | null }) => {
+  const map = useMap();
+  const routingControlRef = useRef<any>(null);
+
+  useEffect(() => {
+    map.setView(center, 15);
+  }, [center, map]);
+
+  useEffect(() => {
+    if (routingTo && center) {
+      if (routingControlRef.current) {
+        map.removeControl(routingControlRef.current);
+      }
+
+      // @ts-ignore
+      routingControlRef.current = L.Routing.control({
+        waypoints: [
+          L.latLng(center[0], center[1]),
+          L.latLng(routingTo.lat, routingTo.lon)
+        ],
+        routeWhileDragging: false,
+        addWaypoints: false,
+        fitSelectedRoutes: true,
+        showAlternatives: false,
+        // @ts-ignore
+        lineOptions: {
+          styles: [{ color: '#f97316', weight: 6 }]
+        },
+        createMarker: () => null // Don't create extra markers
+      }).addTo(map);
+
+      return () => {
+        if (routingControlRef.current) {
+          map.removeControl(routingControlRef.current);
+        }
+      };
+    }
+  }, [routingTo, center, map]);
+
+  return null;
 };
 
 const MapPage = () => {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<mapboxgl.Map | null>(null);
-  const markers = useRef<mapboxgl.Marker[]>([]);
-  
-  const [mapToken, setMapToken] = useState('');
-  const [showTokenInput, setShowTokenInput] = useState(true);
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [selectedResource, setSelectedResource] = useState<HealthResource | null>(null);
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  
-  const { resources, loading, selectedCategory, setSelectedCategory } = useHealthResources(
-    userLocation || undefined
-  );
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<FoodPlace[]>([]);
+  const [selectedPlace, setSelectedPlace] = useState<FoodPlace | null>(null);
+  const [isRouting, setIsRouting] = useState(false);
 
-  const categories = [
-    { id: null, label: '全部', icon: MapPin },
-    { id: 'restaurant', label: '餐厅', icon: Utensils },
-    { id: 'gym', label: '健身房', icon: Dumbbell },
-    { id: 'park', label: '公园', icon: Trees },
-    { id: 'wellness', label: '理疗', icon: Heart },
-  ];
-
-  // Get user location
+  // Get user location on mount
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
+          setUserLocation([position.coords.latitude, position.coords.longitude]);
         },
         () => {
-          // Default to Shanghai if location denied
-          setUserLocation({ lat: 31.2304, lng: 121.4737 });
+          toast.error("无法获取位置，已默认设为上海");
+          setUserLocation([31.2304, 121.4737]);
         }
       );
     } else {
-      setUserLocation({ lat: 31.2304, lng: 121.4737 });
+      setUserLocation([31.2304, 121.4737]);
     }
   }, []);
 
-  // Initialize map
-  useEffect(() => {
-    if (!mapContainer.current || !mapToken || !userLocation) return;
+  const handleSearch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!searchQuery.trim() || !userLocation) return;
 
-    mapboxgl.accessToken = mapToken;
-    
-    map.current = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/light-v11',
-      center: [userLocation.lng, userLocation.lat],
-      zoom: 14,
-    });
+    setIsSearching(true);
+    setSelectedPlace(null);
+    setIsRouting(false);
 
-    // Add user location marker
-    new mapboxgl.Marker({ color: '#14b8a6' })
-      .setLngLat([userLocation.lng, userLocation.lat])
-      .addTo(map.current);
-
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-
-    setShowTokenInput(false);
-
-    return () => {
-      map.current?.remove();
-    };
-  }, [mapToken, userLocation]);
-
-  // Add resource markers
-  useEffect(() => {
-    if (!map.current || !resources.length) return;
-
-    // Clear existing markers
-    markers.current.forEach(marker => marker.remove());
-    markers.current = [];
-
-    // Add new markers
-    resources.forEach(resource => {
-      if (!resource.latitude || !resource.longitude) return;
-
-      const el = document.createElement('div');
-      el.className = 'custom-marker';
-      el.innerHTML = `
-        <div style="
-          width: 36px;
-          height: 36px;
-          background: ${categoryColors[resource.category] || '#14b8a6'};
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-          cursor: pointer;
-          transition: transform 0.2s;
-        ">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-            <circle cx="12" cy="10" r="3"/>
-          </svg>
-        </div>
-      `;
-
-      el.addEventListener('click', () => {
-        setSelectedResource(resource);
-      });
-
-      el.addEventListener('mouseenter', () => {
-        el.querySelector('div')!.style.transform = 'scale(1.2)';
-      });
+    try {
+      // Use Nominatim for searching food near user location
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&lat=${userLocation[0]}&lon=${userLocation[1]}&bounded=1&viewbox=${userLocation[1]-0.1},${userLocation[0]+0.1},${userLocation[1]+0.1},${userLocation[0]-0.1}&limit=10`
+      );
+      const data = await response.json();
       
-      el.addEventListener('mouseleave', () => {
-        el.querySelector('div')!.style.transform = 'scale(1)';
-      });
+      const places: FoodPlace[] = data.map((item: any) => ({
+        id: item.place_id,
+        name: item.display_name.split(',')[0],
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon),
+        address: item.display_name,
+        // Mock delivery info: random for now, or based on some keywords
+        canDeliver: Math.random() > 0.3
+      }));
 
-      const marker = new mapboxgl.Marker(el)
-        .setLngLat([Number(resource.longitude), Number(resource.latitude)])
-        .addTo(map.current!);
-
-      markers.current.push(marker);
-    });
-  }, [resources]);
-
-  const filteredResources = resources.filter(r => 
-    r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    r.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const formatDistance = (km?: number) => {
-    if (!km) return '';
-    if (km < 1) return `${Math.round(km * 1000)}m`;
-    return `${km.toFixed(1)}km`;
+      setSearchResults(places);
+      if (places.length === 0) {
+        toast.info("未找到相关美食");
+      }
+    } catch (error) {
+      console.error("Search error:", error);
+      toast.error("搜索失败，请稍后再试");
+    } finally {
+      setIsSearching(false);
+    }
   };
 
-  if (showTokenInput) {
+  const startRouting = (place: FoodPlace) => {
+    setSelectedPlace(place);
+    setIsRouting(true);
+    setSearchResults([]); // Clear list to focus on map
+  };
+
+  if (!userLocation) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card variant="elevated" className="w-full max-w-md">
-          <CardContent className="p-6 space-y-4">
-            <div className="text-center">
-              <div className="w-16 h-16 mx-auto rounded-2xl gradient-health flex items-center justify-center mb-4">
-                <MapPin className="w-8 h-8 text-primary-foreground" />
-              </div>
-              <h2 className="text-xl font-bold mb-2">设置地图</h2>
-              <p className="text-sm text-muted-foreground">
-                请输入您的 Mapbox 公钥以启用地图功能
-              </p>
-            </div>
-            
-            <Input
-              placeholder="pk.eyJ1..."
-              value={mapToken}
-              onChange={(e) => setMapToken(e.target.value)}
-            />
-            
-            <Button 
-              variant="hero" 
-              className="w-full"
-              disabled={!mapToken}
-              onClick={() => setShowTokenInput(false)}
-            >
-              启用地图
-            </Button>
-            
-            <p className="text-xs text-muted-foreground text-center">
-              访问 <a href="https://mapbox.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">mapbox.com</a> 获取公钥
-            </p>
-          </CardContent>
-        </Card>
+      <div className="h-screen flex flex-col items-center justify-center bg-background">
+        <Loader2 className="w-10 h-10 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">正在获取您的位置...</p>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col relative">
-      {/* Search bar */}
-      <div className="absolute top-4 left-4 right-4 z-10">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-          <Input
-            className="pl-10 pr-10 h-12 rounded-2xl shadow-health bg-card/95 backdrop-blur-sm"
-            placeholder="搜索健康资源..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2"
-            >
-              <X className="w-5 h-5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-
-        {/* Category filters */}
-        <div className="flex gap-2 mt-3 overflow-x-auto pb-2 scrollbar-hide">
-          {categories.map((cat) => (
-            <Button
-              key={cat.id || 'all'}
-              variant={selectedCategory === cat.id ? 'hero' : 'glass'}
-              size="sm"
-              onClick={() => setSelectedCategory(cat.id)}
-              className="flex-shrink-0"
-            >
-              <cat.icon className="w-4 h-4 mr-1" />
-              {cat.label}
-            </Button>
-          ))}
-        </div>
+    <div className="h-screen flex flex-col relative overflow-hidden">
+      {/* Header / Search Bar */}
+      <div className="absolute top-0 left-0 right-0 z-[1000] p-4 bg-gradient-to-b from-background/80 to-transparent">
+        <form onSubmit={handleSearch} className="relative flex gap-2 max-w-2xl mx-auto">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <Input
+              className="pl-10 pr-10 h-12 rounded-full shadow-lg bg-card/95 backdrop-blur-md border-none"
+              placeholder="想吃什么？输入美食名称..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2"
+              >
+                <X className="w-5 h-5 text-muted-foreground" />
+              </button>
+            )}
+          </div>
+          <Button type="submit" size="icon" className="h-12 w-12 rounded-full shadow-lg" disabled={isSearching}>
+            {isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+          </Button>
+        </form>
       </div>
 
-      {/* Map */}
-      <div ref={mapContainer} className="flex-1" />
+      {/* Map Container */}
+      <div className="flex-1 z-0">
+        <MapContainer
+          center={userLocation}
+          zoom={15}
+          style={{ height: '100%', width: '100%' }}
+          zoomControl={false}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <ZoomControl position="bottomright" />
+          
+          <Marker position={userLocation} icon={userIcon}>
+            <Popup>您的当前位置</Popup>
+          </Marker>
 
-      {/* Resource list at bottom */}
-      <motion.div 
-        className="absolute bottom-20 left-0 right-0 px-4"
-        initial={{ y: 100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-      >
-        <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
-          {loading ? (
-            <Card variant="elevated" className="w-64 flex-shrink-0">
-              <CardContent className="p-4 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 animate-spin text-primary" />
-              </CardContent>
-            </Card>
-          ) : (
-            filteredResources.slice(0, 5).map((resource) => {
-              const Icon = categoryIcons[resource.category] || MapPin;
-              return (
-                <Card
-                  key={resource.id}
-                  variant="elevated"
-                  className={`w-64 flex-shrink-0 cursor-pointer transition-all ${
-                    selectedResource?.id === resource.id ? 'ring-2 ring-primary' : ''
-                  }`}
-                  onClick={() => {
-                    setSelectedResource(resource);
-                    if (map.current && resource.latitude && resource.longitude) {
-                      map.current.flyTo({
-                        center: [Number(resource.longitude), Number(resource.latitude)],
-                        zoom: 16
-                      });
-                    }
-                  }}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      <div 
-                        className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: `${categoryColors[resource.category]}20` }}
-                      >
-                        <Icon 
-                          className="w-6 h-6" 
-                          style={{ color: categoryColors[resource.category] }}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{resource.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {categoryLabels[resource.category]}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="flex items-center gap-1">
-                            <Star className="w-3 h-3 fill-health-yellow text-health-yellow" />
-                            <span className="text-xs font-medium">{resource.rating}</span>
-                          </div>
-                          {resource.distance && (
-                            <span className="text-xs text-muted-foreground">
-                              {formatDistance(resource.distance)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
-        </div>
-      </motion.div>
+          {searchResults.map((place) => (
+            <Marker 
+              key={place.id} 
+              position={[place.lat, place.lon]} 
+              icon={foodIcon}
+              eventHandlers={{
+                click: () => setSelectedPlace(place),
+              }}
+            >
+              <Popup>
+                <div className="p-1">
+                  <h3 className="font-bold">{place.name}</h3>
+                  <p className="text-xs text-muted-foreground mb-2">{place.address}</p>
+                  <Button size="sm" className="w-full h-8" onClick={() => startRouting(place)}>
+                    规划路线
+                  </Button>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
 
-      {/* Selected resource detail */}
+          <MapController center={userLocation} routingTo={isRouting ? selectedPlace : null} />
+        </MapContainer>
+      </div>
+
+      {/* Results / Selected Place Overlay */}
       <AnimatePresence>
-        {selectedResource && (
+        {(searchResults.length > 0 || selectedPlace) && (
           <motion.div
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
-            className="absolute bottom-20 left-0 right-0 bg-card rounded-t-3xl shadow-elevated z-20"
+            className="absolute bottom-0 left-0 right-0 z-[1001] p-4 pointer-events-none"
           >
-            <div className="p-4">
-              <button
-                onClick={() => setSelectedResource(null)}
-                className="w-12 h-1 bg-border rounded-full mx-auto mb-4"
-              />
-              
-              <div className="flex gap-4">
-                {selectedResource.image_url && (
-                  <img
-                    src={selectedResource.image_url}
-                    alt={selectedResource.name}
-                    className="w-24 h-24 rounded-xl object-cover"
-                  />
-                )}
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold">{selectedResource.name}</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="secondary">
-                      {categoryLabels[selectedResource.category]}
-                    </Badge>
-                    <div className="flex items-center gap-1">
-                      <Star className="w-4 h-4 fill-health-yellow text-health-yellow" />
-                      <span className="text-sm font-medium">{selectedResource.rating}</span>
-                      <span className="text-xs text-muted-foreground">
-                        ({selectedResource.review_count}条评价)
-                      </span>
+            <div className="max-w-2xl mx-auto pointer-events-auto">
+              {isRouting && selectedPlace ? (
+                <Card className="shadow-2xl border-t-4 border-orange-500">
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h2 className="text-xl font-bold flex items-center gap-2">
+                          <Utensils className="w-5 h-5 text-orange-500" />
+                          {selectedPlace.name}
+                        </h2>
+                        <p className="text-sm text-muted-foreground">{selectedPlace.address}</p>
+                      </div>
+                      <Button variant="ghost" size="icon" onClick={() => setIsRouting(false)}>
+                        <X className="w-5 h-5" />
+                      </Button>
                     </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    {selectedResource.description}
-                  </p>
-                </div>
-              </div>
-
-              {selectedResource.tags && (
-                <div className="flex flex-wrap gap-2 mt-4">
-                  {selectedResource.tags.map((tag, i) => (
-                    <Badge key={i} variant="outline" className="text-xs">
-                      {tag}
-                    </Badge>
+                    <div className="flex gap-3">
+                      <div className={`flex-1 p-3 rounded-xl flex items-center gap-2 ${selectedPlace.canDeliver ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-500'}`}>
+                        <Bike className="w-5 h-5" />
+                        <span className="font-medium">{selectedPlace.canDeliver ? '支持外卖' : '暂不支持外卖'}</span>
+                      </div>
+                      <Button className="flex-1 gap-2" onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedPlace.lat},${selectedPlace.lon}`)}>
+                        <Navigation className="w-4 h-4" />
+                        开始导航
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : searchResults.length > 0 ? (
+                <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                  {searchResults.map((place) => (
+                    <Card 
+                      key={place.id} 
+                      className="w-72 flex-shrink-0 shadow-xl cursor-pointer hover:border-orange-500 transition-colors"
+                      onClick={() => startRouting(place)}
+                    >
+                      <CardContent className="p-4">
+                        <h3 className="font-bold truncate">{place.name}</h3>
+                        <p className="text-xs text-muted-foreground truncate mb-3">{place.address}</p>
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs px-2 py-1 rounded-full ${place.canDeliver ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {place.canDeliver ? '支持外卖' : '仅到店'}
+                          </span>
+                          <Button size="sm" variant="outline" className="h-8">
+                            查看路线
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
                   ))}
                 </div>
-              )}
-
-              <div className="flex gap-3 mt-4">
-                <Button variant="hero" className="flex-1">
-                  <Navigation className="w-4 h-4 mr-2" />
-                  导航前往
-                </Button>
-                {selectedResource.phone && (
-                  <Button variant="outline" size="icon">
-                    <Phone className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
+              ) : null}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Side Menu Trigger (Simplified UI) */}
+      <div className="absolute bottom-6 left-6 z-[1000]">
+        <Button variant="secondary" size="icon" className="h-12 w-12 rounded-full shadow-lg bg-white/90 backdrop-blur">
+          <Menu className="w-6 h-6" />
+        </Button>
+      </div>
+      
+      {/* Current Location Button */}
+      <div className="absolute bottom-24 right-6 z-[1000]">
+        <Button 
+          variant="secondary" 
+          size="icon" 
+          className="h-12 w-12 rounded-full shadow-lg bg-white/90 backdrop-blur"
+          onClick={() => {
+            if (userLocation) {
+              // This will trigger the MapController effect
+              setUserLocation([...userLocation]);
+            }
+          }}
+        >
+          <MapPin className="w-6 h-6 text-blue-500" />
+        </Button>
+      </div>
 
       <BottomNavigation />
     </div>

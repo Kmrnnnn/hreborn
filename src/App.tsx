@@ -36,7 +36,9 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/" element={<Index />} />
+      {/* User wants to see the map immediately upon entry */}
+      <Route path="/" element={<MapPage />} />
+      <Route path="/landing" element={<Index />} />
       <Route path="/auth" element={<AuthPage />} />
       <Route
         path="/onboarding"
@@ -51,14 +53,6 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <DashboardPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/map"
-        element={
-          <ProtectedRoute>
-            <MapPage />
           </ProtectedRoute>
         }
       />

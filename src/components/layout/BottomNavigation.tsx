@@ -1,19 +1,19 @@
 import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Home, MapPin, TrendingUp, User } from 'lucide-react';
+import { MapPin, TrendingUp, User, Info } from 'lucide-react';
 
 const navItems = [
-  { icon: Home, label: '首页', path: '/dashboard' },
-  { icon: MapPin, label: '地图', path: '/map' },
+  { icon: MapPin, label: '地图', path: '/' },
   { icon: TrendingUp, label: '数据', path: '/analytics' },
   { icon: User, label: '我的', path: '/profile' },
+  { icon: Info, label: '关于', path: '/landing' },
 ];
 
 const BottomNavigation = () => {
   const location = useLocation();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-md border-t border-border safe-area-pb z-50">
+    <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-md border-t border-border safe-area-pb z-[1002]">
       <div className="flex items-center justify-around py-2 px-4">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
