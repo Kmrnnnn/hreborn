@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ import {
 } from 'recharts';
 
 const DashboardPage = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { profile, todayRecord, weeklyRecords, loading: dataLoading } = useHealthData();
   const { loading: aiLoading, recommendation, getRecommendation } = useAIRecommendation();
@@ -254,7 +256,7 @@ const DashboardPage = () => {
 
         {/* Quick Actions */}
         <div className="flex gap-3">
-          <Button variant="hero" className="flex-1" onClick={() => window.location.href = '/map'}>
+          <Button variant="hero" className="flex-1" onClick={() => navigate('/')}>
             <MapPin className="w-4 h-4 mr-2" />
             探索附近
           </Button>
