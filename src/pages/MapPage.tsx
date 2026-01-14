@@ -1,16 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Search, Navigation, Utensils, X, Loader2, Bike, MapPin, Menu, Star, Clock, Leaf } from 'lucide-react';
+import { Search, Navigation, X, Loader2, Bike, MapPin, Star, Leaf, RefreshCw } from 'lucide-react';
 import BottomNavigation from '@/components/layout/BottomNavigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { Geolocation } from '@capacitor/geolocation';
-import { Device } from '@capacitor/device';
 
 // Fix Leaflet default icon issue
 // @ts-ignore
@@ -62,6 +60,51 @@ const MapController = ({ center }: { center: [number, number] }) => {
   return null;
 };
 
+// Helper function to get current location
+const getCurrentLocation = (): Promise<[number, number]> => {
+  return new Promise(async (resolve, reject) => {
+    // Try Capacitor Geolocation first (for native iOS/Android)
+    try {
+      const { Geolocation } = await import('@capacitor/geolocation');
+      const coordinates = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true
+      });
+      resolve([coordinates.coords.latitude, coordinates.coords.longitude]);
+      return;
+    } catch (capacitorError) {
+      console.log('Capacitor Geolocation not available, falling back to browser API');
+    }
+    
+    // Fall back to browser Geolocation API
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve([position.coords.latitude, position.coords.longitude]);
+        },
+        (error) => {
+          console.error('Browser geolocation error:', error);
+          reject(error);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    } else {
+      reject(new Error('Geolocation not supported'));
+    }
+  });
+};
+
+// Helper function to check platform
+const isIOS = async (): Promise<boolean> => {
+  try {
+    const { Device } = await import('@capacitor/device');
+    const info = await Device.getInfo();
+    return info.platform === 'ios';
+  } catch {
+    // Check via user agent as fallback
+    return /iPad|iPhone|iPod/.test(navigator.userAgent);
+  }
+};
+
 const MapPage = () => {
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,10 +114,10 @@ const MapPage = () => {
   const [isAutoLoading, setIsAutoLoading] = useState(true);
 
   // Function to search for healthy food
-  const searchHealthyFood = useCallback(async (location: [number, number], query: string = 'healthy food') => {
+  const searchHealthyFood = useCallback(async (location: [number, number], query: string = 'healthy food restaurant') => {
     setIsSearching(true);
     try {
-      const q = query.includes('healthy') ? query : `${query} healthy food`;
+      const q = query.includes('healthy') || query.includes('restaurant') ? query : `${query} healthy food restaurant`;
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&lat=${location[0]}&lon=${location[1]}&bounded=1&viewbox=${location[1]-0.05},${location[0]+0.05},${location[1]+0.05},${location[0]-0.05}&limit=15`
       );
@@ -120,18 +163,16 @@ const MapPage = () => {
     }
   }, [isAutoLoading]);
 
-  // Get user location and auto-search on mount using Capacitor Geolocation
+  // Get user location and auto-search on mount
   useEffect(() => {
     const getLocation = async () => {
       try {
-        const coordinates = await Geolocation.getCurrentPosition({
-          enableHighAccuracy: true
-        });
-        const loc: [number, number] = [coordinates.coords.latitude, coordinates.coords.longitude];
+        const loc = await getCurrentLocation();
         setUserLocation(loc);
         searchHealthyFood(loc);
       } catch (error) {
         console.error("Geolocation error:", error);
+        // Default to Shanghai as fallback
         const defaultLoc: [number, number] = [31.2304, 121.4737];
         setUserLocation(defaultLoc);
         searchHealthyFood(defaultLoc);
@@ -149,13 +190,24 @@ const MapPage = () => {
   };
 
   const openNavigation = async (place: FoodPlace) => {
-    const info = await Device.getInfo();
-    if (info.platform === 'ios') {
+    const iosDevice = await isIOS();
+    if (iosDevice) {
       // Use Apple Maps on iOS
       window.open(`maps://?daddr=${place.lat},${place.lon}&dirflg=d`, '_blank');
     } else {
       // Use Google Maps on other platforms
       window.open(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}`, '_blank');
+    }
+  };
+
+  const handleRefreshLocation = async () => {
+    try {
+      const loc = await getCurrentLocation();
+      setUserLocation(loc);
+      searchHealthyFood(loc);
+      toast.success("已定位到您的当前位置");
+    } catch (error) {
+      toast.error("无法获取位置信息");
     }
   };
 
@@ -176,7 +228,7 @@ const MapPage = () => {
   return (
     <div className="h-screen flex flex-col relative overflow-hidden bg-slate-50">
       {/* Smart Search Header */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] p-4">
+      <div className="absolute top-0 left-0 right-0 z-[1000] p-4 pt-safe">
         <div className="max-w-2xl mx-auto space-y-3">
           <form onSubmit={handleManualSearch} className="relative group">
             <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full opacity-0 group-focus-within:opacity-100 transition-opacity" />
@@ -357,15 +409,7 @@ const MapPage = () => {
           variant="secondary" 
           size="icon" 
           className="h-14 w-14 rounded-2xl shadow-2xl bg-white/90 backdrop-blur hover:bg-white transition-all"
-          onClick={() => {
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition((pos) => {
-                const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
-                setUserLocation(loc);
-                toast.success("已定位到您的当前位置");
-              });
-            }
-          }}
+          onClick={handleRefreshLocation}
         >
           <MapPin className="w-6 h-6 text-blue-600" />
         </Button>
@@ -375,26 +419,5 @@ const MapPage = () => {
     </div>
   );
 };
-
-// Add missing icon
-const RefreshCw = ({ className }: { className?: string }) => (
-  <svg 
-    xmlns="http://www.w3.org/2000/svg" 
-    width="24" 
-    height="24" 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    stroke="currentColor" 
-    strokeWidth="2" 
-    strokeLinecap="round" 
-    strokeLinejoin="round" 
-    className={className}
-  >
-    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-    <path d="M21 3v5h-5" />
-    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-    <path d="M3 21v-5h5" />
-  </svg>
-);
 
 export default MapPage;
