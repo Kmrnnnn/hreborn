@@ -54,12 +54,14 @@ export function useAIRecommendation() {
       return data.recommendation;
     } catch (error) {
       console.error('AI recommendation error:', error);
+      // Return default recommendation instead of null
+      const defaultRecommendation = "保持每天8杯水，适量运动，早睡早起。均衡饮食，多吃蔬菜水果，您的健康目标指日可待！";
+      setRecommendation(defaultRecommendation);
       toast({
-        title: "获取建议失败",
-        description: "请稍后重试",
-        variant: "destructive"
+        title: "使用默认建议",
+        description: "AI服务暂时不可用，已为您提供通用健康建议",
       });
-      return null;
+      return defaultRecommendation;
     } finally {
       setLoading(false);
     }
